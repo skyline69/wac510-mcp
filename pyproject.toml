@@ -1,6 +1,6 @@
 [project]
 name = "wac510-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "FastMCP server for a NETGEAR WAC510 access point"
 readme = "README.md"
 requires-python = ">=3.14"
