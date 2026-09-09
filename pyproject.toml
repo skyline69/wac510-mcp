@@ -4,6 +4,16 @@ version = "0.1.0"
 description = "FastMCP server for a NETGEAR WAC510 access point"
 readme = "README.md"
 requires-python = ">=3.14"
+authors = [{ name = "skyline69" }]
+keywords = ["mcp", "fastmcp", "netgear", "wac510", "wifi"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: No Input/Output (Daemon)",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
 dependencies = [
     "cryptography==50.0.1",
     "fastmcp==4.0.3",
@@ -11,6 +21,11 @@ dependencies = [
     "platformdirs==4.11.8",
     "rich==15.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/skyline69/wac510-mcp"
+Repository = "https://github.com/skyline69/wac510-mcp.git"
+Issues = "https://github.com/skyline69/wac510-mcp/issues"
 
 [project.scripts]
 wac510-mcp = "wac510_mcp.server:main"

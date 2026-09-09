@@ -20,6 +20,12 @@ Install the locked environment:
 uv sync
 ```
 
+After the first PyPI release, run the server without cloning the repository:
+
+```bash
+uvx wac510-mcp
+```
+
 ## Run
 
 Start the local OAuth-protected HTTP server:
