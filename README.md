@@ -61,6 +61,12 @@ Example MCP configuration:
 }
 ```
 
+The server always hides FastMCP's startup banner, including when it runs through FastMCP's generic CLI:
+
+```bash
+uv run fastmcp run src/wac510_mcp/server.py:mcp
+```
+
 ## Safety
 
 Read tools run immediately. Configuration writes require `confirm=true`. Disruptive operations require the exact tokens returned in their tool descriptions:

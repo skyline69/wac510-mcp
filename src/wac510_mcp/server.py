@@ -7,14 +7,15 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.server import Transport
 
 from wac510_mcp.capabilities import CAPABILITIES, describe_capabilities, merge_capabilities
-from wac510_mcp.cli import render_startup_error
+from wac510_mcp.cli import render_startup_error, render_unexpected_error
 from wac510_mcp.client import ALLOWED_ENDPOINTS, WAC510Client
 from wac510_mcp.config import Settings
 from wac510_mcp.errors import WAC510Error
@@ -51,6 +52,30 @@ _ALWAYS_MUTATING_ENDPOINTS = frozenset(
         "/upgradeSFTP",
     }
 )
+
+
+class QuietFastMCP(FastMCP):
+    """FastMCP server that always suppresses banners and prettifies fatal errors."""
+
+    async def run_async(
+        self,
+        transport: Transport | None = None,
+        show_banner: bool | None = None,
+        **transport_kwargs: Any,
+    ) -> None:
+        del show_banner
+        try:
+            await super().run_async(
+                transport=transport,
+                show_banner=False,
+                **transport_kwargs,
+            )
+        except WAC510Error as error:
+            render_startup_error(error)
+            raise SystemExit(2) from None
+        except Exception as error:
+            render_unexpected_error(error)
+            raise SystemExit(1) from None
 
 
 def _get_client(ctx: Context) -> WAC510Client:
@@ -126,7 +151,7 @@ def create_server(
         async with WAC510Client(active_settings, transport=transport) as client:
             yield {"client": client, "settings": active_settings}
 
-    server = FastMCP(
+    server = QuietFastMCP(
         "NETGEAR WAC510",
         instructions=(
             "Manage one NETGEAR WAC510 through its local HTTPS interface. "
@@ -327,6 +352,9 @@ def main() -> None:
     except WAC510Error as error:
         render_startup_error(error)
         raise SystemExit(2) from None
+    except Exception as error:
+        render_unexpected_error(error)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
