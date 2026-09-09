@@ -1335,8 +1335,10 @@ name = "wac510-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastmcp" },
     { name = "httpx" },
+    { name = "platformdirs" },
     { name = "rich" },
 ]
 
@@ -1349,8 +1351,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = "==50.0.1" },
     { name = "fastmcp", specifier = "==4.0.3" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "platformdirs", specifier = "==4.11.8" },
     { name = "rich", specifier = "==15.0.0" },
 ]
 

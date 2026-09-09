@@ -21,17 +21,17 @@ def _presentation(error: WAC510Error) -> tuple[str, str]:
     if isinstance(error, ConfigurationError):
         return (
             "Configuration error",
-            "Set the missing WAC510_* environment variable. See .env.example for every option.",
+            "Reconnect the MCP server with OAuth and complete the setup page.",
         )
     if isinstance(error, AuthenticationError):
         return (
             "Authentication error",
-            "Check WAC510_USERNAME and WAC510_PASSWORD, then verify that the AP allows another login session.",
+            "Return to OAuth setup, check the AP username and password, and try again.",
         )
     if isinstance(error, DeviceConnectionError):
         return (
             "Connection error",
-            "Check WAC510_URL, network reachability, and WAC510_TLS_VERIFY.",
+            "Return to OAuth setup and check the AP URL, network reachability, and TLS setting.",
         )
     if isinstance(error, ProtocolError):
         return (

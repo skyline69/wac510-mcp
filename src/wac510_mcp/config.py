@@ -43,7 +43,34 @@ class Settings:
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
         source = os.environ if environ is None else environ
-        url = _required(source, "WAC510_URL").rstrip("/")
+        ca_text = source.get("WAC510_CA_BUNDLE", "").strip()
+        return cls.from_values(
+            url=_required(source, "WAC510_URL"),
+            username=_required(source, "WAC510_USERNAME"),
+            password=_required(source, "WAC510_PASSWORD"),
+            tls_verify=_parse_bool(
+                source.get("WAC510_TLS_VERIFY", "false"), "WAC510_TLS_VERIFY"
+            ),
+            ca_bundle=ca_text or None,
+            timeout_seconds=source.get("WAC510_TIMEOUT_SECONDS", "10"),
+            download_directory=source.get("WAC510_DOWNLOAD_DIRECTORY", "."),
+        )
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        url: str,
+        username: str,
+        password: str,
+        tls_verify: bool = False,
+        ca_bundle: str | Path | None = None,
+        timeout_seconds: str | float = 10,
+        download_directory: str | Path = ".",
+    ) -> Settings:
+        """Validate values submitted by the setup site or another adapter."""
+
+        url = url.strip().rstrip("/")
         parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ConfigurationError("WAC510_URL must be an absolute HTTP or HTTPS URL")
@@ -52,31 +79,35 @@ class Settings:
         if parsed.query or parsed.fragment:
             raise ConfigurationError("WAC510_URL must not contain a query or fragment")
 
+        username = username.strip()
+        if not username:
+            raise ConfigurationError("WAC510_USERNAME is required")
+        if not password:
+            raise ConfigurationError("WAC510_PASSWORD is required")
+
         try:
-            timeout = float(source.get("WAC510_TIMEOUT_SECONDS", "10"))
-        except ValueError as exc:
+            timeout = float(timeout_seconds)
+        except (TypeError, ValueError) as exc:
             raise ConfigurationError("WAC510_TIMEOUT_SECONDS must be a number") from exc
         if timeout <= 0:
             raise ConfigurationError("WAC510_TIMEOUT_SECONDS must be greater than zero")
 
-        ca_text = source.get("WAC510_CA_BUNDLE", "").strip()
-        ca_bundle = Path(ca_text).expanduser() if ca_text else None
-        if ca_bundle is not None and not ca_bundle.is_file():
+        ca_path = Path(ca_bundle).expanduser() if ca_bundle else None
+        if ca_path is not None and not ca_path.is_file():
             raise ConfigurationError("WAC510_CA_BUNDLE must name a readable file")
 
-        download_directory = Path(source.get("WAC510_DOWNLOAD_DIRECTORY", ".")).expanduser().resolve()
+        download_path = Path(download_directory).expanduser().resolve()
         return cls(
             url=url,
-            username=_required(source, "WAC510_USERNAME"),
-            password=_required(source, "WAC510_PASSWORD"),
-            tls_verify=_parse_bool(source.get("WAC510_TLS_VERIFY", "false"), "WAC510_TLS_VERIFY"),
-            ca_bundle=ca_bundle,
+            username=username,
+            password=password,
+            tls_verify=tls_verify,
+            ca_bundle=ca_path,
             timeout_seconds=timeout,
-            download_directory=download_directory,
+            download_directory=download_path,
         )
 
     def httpx_verify(self) -> bool | ssl.SSLContext:
         if self.ca_bundle is not None:
             return ssl.create_default_context(cafile=str(self.ca_bundle))
         return self.tls_verify
-

@@ -13,6 +13,7 @@ import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.server import Transport
+from platformdirs import user_config_path
 
 from wac510_mcp.capabilities import CAPABILITIES, describe_capabilities, merge_capabilities
 from wac510_mcp.cli import render_startup_error, render_unexpected_error
@@ -20,6 +21,9 @@ from wac510_mcp.client import ALLOWED_ENDPOINTS, WAC510Client
 from wac510_mcp.config import Settings
 from wac510_mcp.errors import WAC510Error
 from wac510_mcp.models import JsonObject, redact
+from wac510_mcp.oauth import WAC510OAuthProvider
+from wac510_mcp.runtime import DeviceRuntime
+from wac510_mcp.storage import EncryptedSettingsStore
 
 type Confirmation = bool | str
 
@@ -78,19 +82,22 @@ class QuietFastMCP(FastMCP):
             raise SystemExit(1) from None
 
 
-def _get_client(ctx: Context) -> WAC510Client:
+def _get_runtime(ctx: Context) -> DeviceRuntime:
     lifespan_context = cast(Mapping[str, object], ctx.lifespan_context)
-    client = lifespan_context.get("client")
-    if not isinstance(client, WAC510Client):
-        raise ToolError("WAC510 client is unavailable")
-    return client
+    runtime = lifespan_context.get("runtime")
+    if not isinstance(runtime, DeviceRuntime):
+        raise ToolError("WAC510 runtime is unavailable")
+    return runtime
 
 
-def _get_settings(ctx: Context) -> Settings:
-    lifespan_context = cast(Mapping[str, object], ctx.lifespan_context)
-    settings = lifespan_context.get("settings")
-    if not isinstance(settings, Settings):
-        raise ToolError("WAC510 settings are unavailable")
+async def _get_client(ctx: Context) -> WAC510Client:
+    return await _get_runtime(ctx).client()
+
+
+async def _get_settings(ctx: Context) -> Settings:
+    settings = await _get_runtime(ctx).settings()
+    if settings is None:
+        raise ToolError("WAC510 is not configured; reconnect through OAuth to open setup")
     return settings
 
 
@@ -142,14 +149,27 @@ def create_server(
     settings: Settings | None = None,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    oauth_base_url: str | None = None,
+    config_directory: Path | None = None,
 ) -> FastMCP:
     """Create a server, optionally with injected settings and HTTP transport."""
 
+    store = EncryptedSettingsStore(
+        config_directory or user_config_path("wac510-mcp", ensure_exists=False)
+    )
+    runtime = DeviceRuntime(store, initial_settings=settings, transport=transport)
+    auth = (
+        WAC510OAuthProvider(base_url=oauth_base_url, runtime=runtime)
+        if oauth_base_url is not None
+        else None
+    )
+
     @asynccontextmanager
     async def app_lifespan(_server: FastMCP) -> AsyncIterator[dict[str, object]]:
-        active_settings = settings or Settings.from_env()
-        async with WAC510Client(active_settings, transport=transport) as client:
-            yield {"client": client, "settings": active_settings}
+        try:
+            yield {"runtime": runtime}
+        finally:
+            await runtime.aclose()
 
     server = QuietFastMCP(
         "NETGEAR WAC510",
@@ -159,6 +179,7 @@ def create_server(
         ),
         version="0.1.0",
         lifespan=app_lifespan,
+        auth=auth,
         on_duplicate="error",
     )
 
@@ -181,7 +202,8 @@ def create_server(
     async def device_info(ctx: Context) -> JsonObject:
         """Read product, firmware, serial, and firmware-channel information."""
 
-        return await _get_client(ctx).query(deepcopy(CAPABILITIES["identity"].selector))
+        client = await _get_client(ctx)
+        return await client.query(deepcopy(CAPABILITIES["identity"].selector))
 
     @server.tool
     async def query_capabilities(names: list[str], ctx: Context) -> JsonObject:
@@ -193,7 +215,8 @@ def create_server(
 
         async def query_one(selector: JsonObject) -> JsonObject:
             async with semaphore:
-                return await _get_client(ctx).query(selector)
+                client = await _get_client(ctx)
+                return await client.query(selector)
 
         responses = await asyncio.gather(*(query_one(selector) for _, selector in selectors))
         return {
@@ -210,25 +233,29 @@ def create_server(
         if not 1 <= limit <= 100:
             raise ToolError("limit must be between 1 and 100")
         selector: JsonObject = {"system": {"monitor": {"recentCliList": {str(limit): ""}}}}
-        return await _get_client(ctx).query(selector)
+        client = await _get_client(ctx)
+        return await client.query(selector)
 
     @server.tool
     async def radio_status(ctx: Context) -> JsonObject:
         """Read radio enablement, supported bands, and station counts."""
 
-        return await _get_client(ctx).query(deepcopy(CAPABILITIES["radio_status"].selector))
+        client = await _get_client(ctx)
+        return await client.query(deepcopy(CAPABILITIES["radio_status"].selector))
 
     @server.tool
     async def traffic_statistics(ctx: Context) -> JsonObject:
         """Read Ethernet and Wi-Fi packet and byte counters."""
 
-        return await _get_client(ctx).query(deepcopy(CAPABILITIES["traffic"].selector))
+        client = await _get_client(ctx)
+        return await client.query(deepcopy(CAPABILITIES["traffic"].selector))
 
     @server.tool
     async def raw_query(payload: JsonObject, ctx: Context) -> JsonObject:
         """Send an arbitrary read selector through /socketCommunication."""
 
-        return await _get_client(ctx).query(payload)
+        client = await _get_client(ctx)
+        return await client.query(payload)
 
     @server.tool
     async def apply_configuration(
@@ -240,7 +267,8 @@ def create_server(
 
         if not confirm:
             return _preview("apply_configuration", payload, "true")
-        result = await _get_client(ctx).apply(payload)
+        client = await _get_client(ctx)
+        result = await client.apply(payload)
         return {"performed": True, "response": result}
 
     @server.tool
@@ -261,7 +289,8 @@ def create_server(
         required = _confirmation_required(normalized, effective_mutating)
         if required is not None and not _confirmed(confirm, required):
             return _preview(normalized, payload, required)
-        return await _get_client(ctx).request(normalized, payload, mutating=effective_mutating)
+        client = await _get_client(ctx)
+        return await client.request(normalized, payload, mutating=effective_mutating)
 
     @server.tool
     async def download_file(
@@ -277,9 +306,10 @@ def create_server(
         if normalized not in _DOWNLOAD_ENDPOINTS:
             valid = ", ".join(sorted(_DOWNLOAD_ENDPOINTS))
             raise ToolError(f"download endpoint must be one of: {valid}")
-        active_settings = _get_settings(ctx)
+        active_settings = await _get_settings(ctx)
         path = _resolve_inside(active_settings.download_directory, destination, must_exist=False)
-        size = await _get_client(ctx).download(
+        client = await _get_client(ctx)
+        size = await client.download(
             normalized,
             payload,
             path,
@@ -307,9 +337,10 @@ def create_server(
         empty_payload: JsonObject = {"source": Path(source).name, "field_name": field_name}
         if not _confirmed(confirm, required):
             return _preview(normalized, empty_payload, required)
-        active_settings = _get_settings(ctx)
+        active_settings = await _get_settings(ctx)
         path = _resolve_inside(active_settings.download_directory, source, must_exist=True)
-        response = await _get_client(ctx).upload(
+        client = await _get_client(ctx)
+        response = await client.upload(
             normalized,
             path,
             field_name=field_name,
@@ -325,7 +356,8 @@ def create_server(
         payload: JsonObject = {"reboot": 1}
         if confirm != "REBOOT":
             return _preview("/reboot", payload, "REBOOT")
-        response = await _get_client(ctx).request("/reboot", payload, mutating=True)
+        client = await _get_client(ctx)
+        response = await client.request("/reboot", payload, mutating=True)
         return {"performed": True, "response": response}
 
     @server.tool
@@ -335,20 +367,32 @@ def create_server(
         payload: JsonObject = {"hardFactoryReset": 1}
         if confirm != "FACTORY_RESET":
             return _preview("/HardFactory", payload, "FACTORY_RESET")
-        response = await _get_client(ctx).request("/HardFactory", payload, mutating=True)
+        client = await _get_client(ctx)
+        response = await client.request("/HardFactory", payload, mutating=True)
         return {"performed": True, "response": response}
 
     return server
 
 
-mcp = create_server()
+_DEFAULT_HOST = "127.0.0.1"
+_DEFAULT_PORT = 8000
+_DEFAULT_BASE_URL = f"http://{_DEFAULT_HOST}:{_DEFAULT_PORT}"
+
+mcp = create_server(oauth_base_url=_DEFAULT_BASE_URL)
 
 
 def main() -> None:
-    """Run the stdio MCP server."""
+    """Run the OAuth-protected HTTP MCP server."""
 
     try:
-        mcp.run(show_banner=False)
+        mcp.run(
+            transport="http",
+            host=_DEFAULT_HOST,
+            port=_DEFAULT_PORT,
+            show_banner=False,
+        )
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
     except WAC510Error as error:
         render_startup_error(error)
         raise SystemExit(2) from None

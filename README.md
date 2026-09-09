@@ -20,52 +20,47 @@ Install the locked environment:
 uv sync
 ```
 
-## Configuration
-
-Set these variables in the MCP client's environment. Do not commit a populated `.env` file.
-
-```bash
-WAC510_URL=https://192.168.2.31
-WAC510_USERNAME=admin
-WAC510_PASSWORD=replace-me
-WAC510_TLS_VERIFY=false
-WAC510_TIMEOUT_SECONDS=10
-WAC510_DOWNLOAD_DIRECTORY=./downloads
-```
-
-`WAC510_TLS_VERIFY` defaults to `false` because the AP normally uses a self-signed certificate. Set it to `true` for a publicly trusted certificate, or set `WAC510_CA_BUNDLE` to a private CA file.
-
 ## Run
 
-Run the default stdio server:
+Start the local OAuth-protected HTTP server:
 
 ```bash
 uv run wac510-mcp
 ```
 
-Example MCP configuration:
+Connect your MCP client to:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+The MCP client's OAuth flow opens a page titled **WAC510 MCP**. Enter the access point URL, username, password, and optional connection settings. The server verifies that the device is a WAC510 before authorization completes.
+
+Example URL-based MCP configuration:
 
 ```json
 {
   "mcpServers": {
     "wac510": {
-      "command": "uv",
-      "args": ["--directory", "/absolute/path/to/wac510-mcp", "run", "wac510-mcp"],
-      "env": {
-        "WAC510_URL": "https://192.168.2.31",
-        "WAC510_USERNAME": "admin",
-        "WAC510_PASSWORD": "replace-me"
-      }
+      "url": "http://127.0.0.1:8000/mcp"
     }
   }
 }
 ```
 
-The server always hides FastMCP's startup banner, including when it runs through FastMCP's generic CLI:
+The server always hides FastMCP's startup banner. No environment variable or launch flag is required.
 
-```bash
-uv run fastmcp run src/wac510_mcp/server.py:mcp
+## Stored settings
+
+Settings are saved under the platform's user configuration directory. On Linux, the default location is:
+
+```text
+~/.config/wac510-mcp/
 ```
+
+`settings.enc` contains the encrypted AP configuration. `settings.key` contains its local encryption key. Both files use owner-only permissions, and the password is never rendered back into the setup page. OAuth clients and access tokens remain in memory; after a server restart, the MCP client authenticates again and the page reuses the saved settings.
+
+TLS verification defaults to off because the AP normally uses a self-signed certificate. The setup page can enable verification or specify a private CA bundle.
 
 ## Safety
 
@@ -112,7 +107,7 @@ uv run pytest
 uv run mypy src tests
 ```
 
-The live test suite is read-only and opt-in:
+The live test suite is read-only and opt-in. Its environment variables exist only for automated testing; normal users configure the server through OAuth:
 
 ```bash
 WAC510_LIVE_TEST=1 uv run pytest tests/test_live_readonly.py -q

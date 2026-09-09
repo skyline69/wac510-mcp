@@ -5,8 +5,10 @@ description = "FastMCP server for a NETGEAR WAC510 access point"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "cryptography==50.0.1",
     "fastmcp==4.0.3",
     "httpx==0.28.1",
+    "platformdirs==4.11.8",
     "rich==15.0.0",
 ]
 

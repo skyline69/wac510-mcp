@@ -38,3 +38,17 @@ def test_ca_bundle_enables_ssl_context(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="readable file"):
         Settings.from_env(env)
 
+
+def test_settings_accept_valid_website_values(tmp_path: Path) -> None:
+    settings = Settings.from_values(
+        url=" https://192.0.2.1/ ",
+        username=" admin ",
+        password="secret",
+        tls_verify=False,
+        timeout_seconds="12.5",
+        download_directory=tmp_path,
+    )
+    assert settings.url == "https://192.0.2.1"
+    assert settings.username == "admin"
+    assert settings.timeout_seconds == 12.5
+    assert settings.download_directory == tmp_path
