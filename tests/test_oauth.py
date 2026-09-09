@@ -39,11 +39,14 @@ def authorization_params() -> AuthorizationParams:
 
 async def test_setup_page_has_exact_title_and_never_renders_password(tmp_path: Path) -> None:
     fake_ap = FakeAP()
+    store = EncryptedSettingsStore(tmp_path / "config")
     runtime = DeviceRuntime(
-        EncryptedSettingsStore(tmp_path / "config"),
+        store,
         transport=httpx.MockTransport(fake_ap.handler),
     )
-    provider = WAC510OAuthProvider(base_url="http://127.0.0.1:8000", runtime=runtime)
+    provider = WAC510OAuthProvider(
+        base_url="http://127.0.0.1:8000", runtime=runtime, store=store
+    )
     client_info = oauth_client()
     await provider.register_client(client_info)
     setup_url = await provider.authorize(client_info, authorization_params())
@@ -113,8 +116,11 @@ async def test_http_server_advertises_oauth_and_rejects_anonymous_mcp(tmp_path: 
 
 
 async def test_expired_authorization_has_actionable_page(tmp_path: Path) -> None:
-    runtime = DeviceRuntime(EncryptedSettingsStore(tmp_path / "config"))
-    provider = WAC510OAuthProvider(base_url="http://127.0.0.1:8000", runtime=runtime)
+    store = EncryptedSettingsStore(tmp_path / "config")
+    runtime = DeviceRuntime(store)
+    provider = WAC510OAuthProvider(
+        base_url="http://127.0.0.1:8000", runtime=runtime, store=store
+    )
     app = Starlette(routes=provider.get_routes("/mcp"))
 
     async with httpx.AsyncClient(
@@ -134,11 +140,14 @@ async def test_expired_authorization_has_actionable_page(tmp_path: Path) -> None
 
 async def test_complete_oauth_code_flow_uses_setup_form(tmp_path: Path) -> None:
     fake_ap = FakeAP()
+    store = EncryptedSettingsStore(tmp_path / "config")
     runtime = DeviceRuntime(
-        EncryptedSettingsStore(tmp_path / "config"),
+        store,
         transport=httpx.MockTransport(fake_ap.handler),
     )
-    provider = WAC510OAuthProvider(base_url="http://127.0.0.1:8000", runtime=runtime)
+    provider = WAC510OAuthProvider(
+        base_url="http://127.0.0.1:8000", runtime=runtime, store=store
+    )
     app = Starlette(routes=provider.get_routes("/mcp"))
     verifier = "a" * 64
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
@@ -208,5 +217,35 @@ async def test_complete_oauth_code_flow_uses_setup_form(tmp_path: Path) -> None:
         assert token.status_code == 200
         assert token.json()["token_type"] == "Bearer"
         assert token.json()["access_token"]
+        token_data = token.json()
 
     await runtime.aclose()
+
+    restarted_runtime = DeviceRuntime(store)
+    restarted_provider = WAC510OAuthProvider(
+        base_url="http://127.0.0.1:8000",
+        runtime=restarted_runtime,
+        store=store,
+    )
+    assert await restarted_provider.get_client(client_id) is not None
+    assert await restarted_provider.verify_token(token_data["access_token"]) is not None
+
+    restarted_app = Starlette(routes=restarted_provider.get_routes("/mcp"))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=restarted_app),
+        base_url="http://127.0.0.1:8000",
+    ) as client:
+        refreshed = await client.post(
+            "/token",
+            data={
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "refresh_token": token_data["refresh_token"],
+                "scope": "wac510",
+            },
+        )
+
+    assert refreshed.status_code == 200
+    assert refreshed.json()["access_token"] != token_data["access_token"]
+    assert token_data["access_token"].encode() not in (store.directory / "oauth.enc").read_bytes()
+    await restarted_runtime.aclose()

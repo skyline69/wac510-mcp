@@ -178,7 +178,7 @@ def create_server(
     )
     runtime = DeviceRuntime(store, initial_settings=settings, transport=transport)
     auth = (
-        WAC510OAuthProvider(base_url=oauth_base_url, runtime=runtime)
+        WAC510OAuthProvider(base_url=oauth_base_url, runtime=runtime, store=store)
         if oauth_base_url is not None
         else None
     )

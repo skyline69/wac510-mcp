@@ -115,7 +115,7 @@ Settings are saved under the platform's user configuration directory. On Linux, 
 ~/.config/wac510-mcp/
 ```
 
-`settings.enc` contains the encrypted AP configuration. `settings.key` contains its local encryption key. Both files use owner-only permissions, and the password is never rendered back into the setup page. OAuth clients and access tokens remain in memory; after a server restart, the MCP client authenticates again and the page reuses the saved settings.
+`settings.enc` contains the encrypted AP configuration, `oauth.enc` contains OAuth client registrations and tokens, and `settings.key` contains their local encryption key. All files use owner-only permissions, and the password is never rendered back into the setup page. OAuth access and refresh tokens survive server restarts while retaining expiration, client binding, rotation, and revocation behavior.
 
 TLS verification defaults to off because the AP normally uses a self-signed certificate. The setup page can enable verification or specify a private CA bundle.
 

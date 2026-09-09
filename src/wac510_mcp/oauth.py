@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
 import secrets
 import time
@@ -9,17 +10,24 @@ from dataclasses import dataclass
 from urllib.parse import urlencode
 
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
-from mcp.server.auth.provider import AuthorizationParams
+from mcp.server.auth.provider import (
+    AccessToken,
+    AuthorizationCode,
+    AuthorizationParams,
+    RefreshToken,
+)
 from mcp.server.auth.settings import ClientRegistrationOptions
-from mcp.shared.auth import OAuthClientInformationFull
+from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from pydantic import ValidationError
 from starlette.datastructures import FormData
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from wac510_mcp.config import Settings
-from wac510_mcp.errors import WAC510Error
+from wac510_mcp.errors import ConfigurationError, WAC510Error
 from wac510_mcp.runtime import DeviceRuntime
+from wac510_mcp.storage import EncryptedSettingsStore
 
 _AUTH_REQUEST_TTL_SECONDS = 15 * 60
 
@@ -179,7 +187,13 @@ def _html_response(content: str, status_code: int = 200) -> HTMLResponse:
 class WAC510OAuthProvider(InMemoryOAuthProvider):
     """Local OAuth provider whose authorization page configures the AP."""
 
-    def __init__(self, *, base_url: str, runtime: DeviceRuntime) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        runtime: DeviceRuntime,
+        store: EncryptedSettingsStore,
+    ) -> None:
         normalized_base_url = base_url.rstrip("/")
         super().__init__(
             base_url=normalized_base_url,
@@ -193,7 +207,120 @@ class WAC510OAuthProvider(InMemoryOAuthProvider):
         )
         self._public_base_url = normalized_base_url
         self._runtime = runtime
+        self._store = store
         self._pending: dict[str, PendingAuthorization] = {}
+        self._state_loaded = False
+        self._state_load_lock = asyncio.Lock()
+        self._state_write_lock = asyncio.Lock()
+
+    @staticmethod
+    def _mapping(state: dict[str, object], name: str) -> dict[str, object]:
+        value = state.get(name, {})
+        if not isinstance(value, dict):
+            raise ConfigurationError(f"OAuth state field {name!r} is invalid")
+        return value
+
+    def _is_state_loaded(self) -> bool:
+        return self._state_loaded
+
+    async def _ensure_state_loaded(self) -> None:
+        if self._is_state_loaded():
+            return
+        async with self._state_load_lock:
+            if self._is_state_loaded():
+                return
+            state = await self._store.load_oauth_state()
+            if state is not None:
+                try:
+                    if state.get("version") != 1:
+                        raise ValueError("unsupported OAuth state version")
+                    self.clients = {
+                        key: OAuthClientInformationFull.model_validate(value)
+                        for key, value in self._mapping(state, "clients").items()
+                    }
+                    self.auth_codes = {
+                        key: AuthorizationCode.model_validate(value)
+                        for key, value in self._mapping(state, "auth_codes").items()
+                    }
+                    self.access_tokens = {
+                        key: AccessToken.model_validate(value)
+                        for key, value in self._mapping(state, "access_tokens").items()
+                    }
+                    self.refresh_tokens = {
+                        key: RefreshToken.model_validate(value)
+                        for key, value in self._mapping(state, "refresh_tokens").items()
+                    }
+                    self._access_to_refresh_map = {
+                        key: str(value)
+                        for key, value in self._mapping(
+                            state, "access_to_refresh"
+                        ).items()
+                    }
+                    self._refresh_to_access_map = {
+                        key: str(value)
+                        for key, value in self._mapping(
+                            state, "refresh_to_access"
+                        ).items()
+                    }
+                except (TypeError, ValueError, ValidationError) as error:
+                    raise ConfigurationError(
+                        "saved OAuth state has an invalid format"
+                    ) from error
+            self._state_loaded = True
+            if self._prune_expired_state():
+                await self._persist_state()
+
+    def _prune_expired_state(self) -> bool:
+        now = time.time()
+        changed = False
+        for code, authorization in list(self.auth_codes.items()):
+            if authorization.expires_at < now:
+                del self.auth_codes[code]
+                changed = True
+        for token, access in list(self.access_tokens.items()):
+            if access.expires_at is not None and access.expires_at < now:
+                self._revoke_internal(access_token_str=token)
+                changed = True
+        for token, refresh in list(self.refresh_tokens.items()):
+            if refresh.expires_at is not None and refresh.expires_at < now:
+                self._revoke_internal(refresh_token_str=token)
+                changed = True
+        return changed
+
+    async def _persist_state(self) -> None:
+        await self._store.save_oauth_state(
+            {
+                "version": 1,
+                "clients": {
+                    key: value.model_dump(mode="json")
+                    for key, value in self.clients.items()
+                },
+                "auth_codes": {
+                    key: value.model_dump(mode="json")
+                    for key, value in self.auth_codes.items()
+                },
+                "access_tokens": {
+                    key: value.model_dump(mode="json")
+                    for key, value in self.access_tokens.items()
+                },
+                "refresh_tokens": {
+                    key: value.model_dump(mode="json")
+                    for key, value in self.refresh_tokens.items()
+                },
+                "access_to_refresh": dict(self._access_to_refresh_map),
+                "refresh_to_access": dict(self._refresh_to_access_map),
+            }
+        )
+
+    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        await self._ensure_state_loaded()
+        return await super().get_client(client_id)
+
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        await self._ensure_state_loaded()
+        async with self._state_write_lock:
+            await super().register_client(client_info)
+            await self._persist_state()
 
     def _prune(self) -> None:
         now = time.monotonic()
@@ -208,6 +335,7 @@ class WAC510OAuthProvider(InMemoryOAuthProvider):
         client: OAuthClientInformationFull,
         params: AuthorizationParams,
     ) -> str:
+        await self._ensure_state_loaded()
         self._prune()
         request_id = secrets.token_urlsafe(32)
         self._pending[request_id] = PendingAuthorization(
@@ -280,8 +408,61 @@ class WAC510OAuthProvider(InMemoryOAuthProvider):
             )
 
         self._pending.pop(request_id, None)
-        redirect_url = await super().authorize(pending.client, pending.params)
+        async with self._state_write_lock:
+            redirect_url = await super().authorize(pending.client, pending.params)
+            await self._persist_state()
         return RedirectResponse(redirect_url, status_code=303)
+
+    async def load_authorization_code(
+        self,
+        client: OAuthClientInformationFull,
+        authorization_code: str,
+    ) -> AuthorizationCode | None:
+        await self._ensure_state_loaded()
+        return await super().load_authorization_code(client, authorization_code)
+
+    async def exchange_authorization_code(
+        self,
+        client: OAuthClientInformationFull,
+        authorization_code: AuthorizationCode,
+    ) -> OAuthToken:
+        await self._ensure_state_loaded()
+        async with self._state_write_lock:
+            token = await super().exchange_authorization_code(client, authorization_code)
+            await self._persist_state()
+            return token
+
+    async def load_refresh_token(
+        self,
+        client: OAuthClientInformationFull,
+        refresh_token: str,
+    ) -> RefreshToken | None:
+        await self._ensure_state_loaded()
+        return await super().load_refresh_token(client, refresh_token)
+
+    async def exchange_refresh_token(
+        self,
+        client: OAuthClientInformationFull,
+        refresh_token: RefreshToken,
+        scopes: list[str],
+    ) -> OAuthToken:
+        await self._ensure_state_loaded()
+        async with self._state_write_lock:
+            token = await super().exchange_refresh_token(client, refresh_token, scopes)
+            await self._persist_state()
+            return token
+
+    async def load_access_token(  # type: ignore[override]
+        self, token: str
+    ) -> AccessToken | None:
+        await self._ensure_state_loaded()
+        return await super().load_access_token(token)
+
+    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        await self._ensure_state_loaded()
+        async with self._state_write_lock:
+            await super().revoke_token(token)
+            await self._persist_state()
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
         return [

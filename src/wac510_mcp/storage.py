@@ -22,6 +22,7 @@ class EncryptedSettingsStore:
         self.directory = directory.expanduser().resolve()
         self._key_path = self.directory / "settings.key"
         self._settings_path = self.directory / "settings.enc"
+        self._oauth_path = self.directory / "oauth.enc"
         self._lock = asyncio.Lock()
 
     async def load(self) -> Settings | None:
@@ -31,6 +32,18 @@ class EncryptedSettingsStore:
     async def save(self, settings: Settings) -> None:
         async with self._lock:
             await asyncio.to_thread(self._save_sync, settings)
+
+    async def load_oauth_state(self) -> dict[str, object] | None:
+        async with self._lock:
+            return await asyncio.to_thread(
+                self._load_encrypted_json,
+                self._oauth_path,
+                "saved OAuth state",
+            )
+
+    async def save_oauth_state(self, state: dict[str, object]) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._save_encrypted_json, self._oauth_path, state)
 
     def _prepare_directory(self) -> None:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -55,16 +68,9 @@ class EncryptedSettingsStore:
             return key
 
     def _load_sync(self) -> Settings | None:
-        if not self._settings_path.exists():
+        data = self._load_encrypted_json(self._settings_path, "saved WAC510 settings")
+        if data is None:
             return None
-        try:
-            decrypted = Fernet(self._key()).decrypt(self._settings_path.read_bytes())
-            raw = json.loads(decrypted)
-        except (InvalidToken, OSError, ValueError, TypeError) as exc:
-            raise ConfigurationError("saved WAC510 settings could not be read") from exc
-        if not isinstance(raw, dict):
-            raise ConfigurationError("saved WAC510 settings have an invalid format")
-        data = cast(dict[str, object], raw)
         return Settings.from_values(
             url=str(data.get("url", "")),
             username=str(data.get("username", "")),
@@ -76,7 +82,8 @@ class EncryptedSettingsStore:
         )
 
     def _save_sync(self, settings: Settings) -> None:
-        payload = json.dumps(
+        self._save_encrypted_json(
+            self._settings_path,
             {
                 "url": settings.url,
                 "username": settings.username,
@@ -86,18 +93,35 @@ class EncryptedSettingsStore:
                 "timeout_seconds": settings.timeout_seconds,
                 "download_directory": str(settings.download_directory),
             },
-            separators=(",", ":"),
-        ).encode()
+        )
+
+    def _load_encrypted_json(
+        self,
+        path: Path,
+        description: str,
+    ) -> dict[str, object] | None:
+        if not path.exists():
+            return None
+        try:
+            decrypted = Fernet(self._key()).decrypt(path.read_bytes())
+            raw = json.loads(decrypted)
+        except (InvalidToken, OSError, ValueError, TypeError) as exc:
+            raise ConfigurationError(f"{description} could not be read") from exc
+        if not isinstance(raw, dict):
+            raise ConfigurationError(f"{description} has an invalid format")
+        return cast(dict[str, object], raw)
+
+    def _save_encrypted_json(self, path: Path, state: dict[str, object]) -> None:
+        payload = json.dumps(state, separators=(",", ":")).encode()
         encrypted = Fernet(self._key()).encrypt(payload)
         with tempfile.NamedTemporaryFile(
             mode="wb",
             dir=self.directory,
-            prefix=".settings.",
+            prefix=f".{path.stem}.",
             delete=False,
         ) as output:
             temporary = Path(output.name)
             os.chmod(temporary, 0o600)
             output.write(encrypted)
-        temporary.replace(self._settings_path)
-        os.chmod(self._settings_path, 0o600)
-
+        temporary.replace(path)
+        os.chmod(path, 0o600)
