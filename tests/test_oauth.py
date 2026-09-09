@@ -80,12 +80,15 @@ async def test_setup_page_has_exact_title_and_never_renders_password(tmp_path: P
 
         second_url = await provider.authorize(client_info, authorization_params())
         second_page = await client.get(second_url)
-        assert "Existing settings found" in second_page.text
+        assert "Leave blank to keep the saved password." in second_page.text
         assert "secret" not in second_page.text
+        assert "letter-spacing" not in second_page.text
+        assert 'class="status"' not in second_page.text
+        assert "Local access point control" not in second_page.text
 
         public_home = await client.get("/")
         assert "https://192.0.2.1" not in public_home.text
-        assert "Existing settings found" not in public_home.text
+        assert "Leave blank to keep the saved password." not in public_home.text
 
     await runtime.aclose()
 
@@ -106,6 +109,23 @@ async def test_http_server_advertises_oauth_and_rejects_anonymous_mcp(tmp_path: 
     assert metadata.status_code == 200
     assert metadata.json()["authorization_endpoint"] == "http://127.0.0.1:8000/authorize"
     assert protected.status_code == 401
+
+
+async def test_expired_authorization_has_actionable_page(tmp_path: Path) -> None:
+    runtime = DeviceRuntime(EncryptedSettingsStore(tmp_path / "config"))
+    provider = WAC510OAuthProvider(base_url="http://127.0.0.1:8000", runtime=runtime)
+    app = Starlette(routes=provider.get_routes("/mcp"))
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://127.0.0.1:8000",
+    ) as client:
+        response = await client.get("/setup?request=expired")
+
+    assert response.status_code == 410
+    assert "Authorization request expired." in response.text
+    assert "start the MCP login again" in response.text
+    await runtime.aclose()
 
 
 async def test_complete_oauth_code_flow_uses_setup_form(tmp_path: Path) -> None:

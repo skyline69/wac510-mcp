@@ -21,7 +21,7 @@ from wac510_mcp.config import Settings
 from wac510_mcp.errors import WAC510Error
 from wac510_mcp.runtime import DeviceRuntime
 
-_AUTH_REQUEST_TTL_SECONDS = 5 * 60
+_AUTH_REQUEST_TTL_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +41,7 @@ def _page(
     request_id: str | None,
     settings: Settings | None,
     error: str | None = None,
+    error_title: str = "Setup could not be saved.",
     submitted: FormData | None = None,
 ) -> str:
     def value(name: str, fallback: str = "") -> str:
@@ -62,11 +63,10 @@ def _page(
     )
     request_field = html.escape(request_id or "", quote=True)
     error_html = (
-        f'<div class="error" role="alert"><strong>Setup could not be saved.</strong> {html.escape(error)}</div>'
+        f'<div class="error" role="alert"><strong>{html.escape(error_title)}</strong> {html.escape(error)}</div>'
         if error
         else ""
     )
-    configured = '<span class="status"><i></i> Existing settings found</span>' if settings else ""
     disabled = "" if request_id else " disabled"
     button_label = "Save & authorize" if request_id else "Start from your MCP client"
     password_hint = "Leave blank to keep the saved password." if settings else "Stored encrypted after verification."
@@ -78,22 +78,18 @@ def _page(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WAC510 MCP</title>
   <style>
-    :root {{ color-scheme: light; --paper:#f4f3ef; --ink:#17191c; --muted:#696d73; --line:#d5d3cc; --signal:#087ea4; --signal-dark:#075f7a; --danger:#a23232; }}
+    :root {{ color-scheme: light; --paper:#f6f6f4; --ink:#202124; --muted:#6b7075; --line:#d7d8d5; --signal:#147d9e; --signal-dark:#0e647f; --danger:#a23232; }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; min-height:100vh; background:var(--paper); color:var(--ink); font-family:"Avenir Next","Segoe UI",sans-serif; }}
-    body::before {{ content:""; position:fixed; inset:0; pointer-events:none; opacity:.32; background-image:linear-gradient(rgba(23,25,28,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(23,25,28,.045) 1px,transparent 1px); background-size:32px 32px; mask-image:linear-gradient(to bottom,black,transparent 72%); }}
-    main {{ position:relative; width:min(680px,calc(100% - 32px)); margin:0 auto; padding:64px 0; }}
-    header {{ display:flex; align-items:flex-start; justify-content:space-between; gap:24px; margin-bottom:28px; }}
-    .eyebrow {{ margin:0 0 8px; color:var(--signal); font:700 12px/1.2 ui-monospace,SFMono-Regular,monospace; letter-spacing:.16em; text-transform:uppercase; }}
-    h1 {{ margin:0; font:650 clamp(34px,7vw,54px)/.98 "Avenir Next","Segoe UI",sans-serif; letter-spacing:-.045em; }}
-    .intro {{ max-width:500px; margin:16px 0 0; color:var(--muted); font-size:16px; line-height:1.55; }}
-    .status {{ flex:none; display:inline-flex; align-items:center; gap:8px; margin-top:7px; padding:8px 11px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:12px; background:rgba(255,255,255,.55); }}
-    .status i {{ width:7px; height:7px; border-radius:50%; background:#27855c; box-shadow:0 0 0 3px rgba(39,133,92,.12); }}
-    form {{ padding:28px; border:1px solid var(--line); border-radius:14px; background:rgba(255,255,255,.72); box-shadow:0 18px 60px rgba(20,24,28,.08); backdrop-filter:blur(8px); }}
+    main {{ width:min(620px,calc(100% - 32px)); margin:0 auto; padding:64px 0; }}
+    header {{ margin-bottom:28px; }}
+    h1 {{ margin:0; font-size:38px; font-weight:650; line-height:1.1; }}
+    .intro {{ max-width:520px; margin:12px 0 0; color:var(--muted); font-size:16px; line-height:1.55; }}
+    form {{ padding:28px; border:1px solid var(--line); border-radius:9px; background:#fff; box-shadow:0 8px 30px rgba(20,24,28,.05); }}
     .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }}
     .wide {{ grid-column:1/-1; }}
     label {{ display:block; margin:0 0 7px; font-size:13px; font-weight:650; }}
-    input {{ width:100%; min-height:44px; padding:10px 12px; border:1px solid #b9b8b3; border-radius:7px; background:#fff; color:var(--ink); font:500 15px/1.2 ui-monospace,SFMono-Regular,monospace; outline:none; transition:border-color .16s,box-shadow .16s; }}
+    input {{ width:100%; min-height:44px; padding:10px 12px; border:1px solid #b9b8b3; border-radius:6px; background:#fff; color:var(--ink); font:inherit; font-size:15px; outline:none; transition:border-color .16s,box-shadow .16s; }}
     input:focus {{ border-color:var(--signal); box-shadow:0 0 0 3px rgba(8,126,164,.13); }}
     .hint {{ margin:7px 0 0; color:var(--muted); font-size:12px; line-height:1.4; }}
     details {{ margin-top:22px; padding-top:18px; border-top:1px solid var(--line); }}
@@ -103,23 +99,18 @@ def _page(
     .check input {{ width:17px; min-height:17px; accent-color:var(--signal); }}
     .check label {{ margin:0; }}
     .error {{ margin:0 0 20px; padding:13px 15px; border-left:3px solid var(--danger); background:#fff0f0; color:#702323; font-size:13px; line-height:1.45; }}
-    button {{ width:100%; margin-top:24px; min-height:48px; border:0; border-radius:7px; background:var(--signal); color:white; font-size:14px; font-weight:750; letter-spacing:.01em; cursor:pointer; transition:background .16s,transform .16s; }}
-    button:hover:not(:disabled) {{ background:var(--signal-dark); transform:translateY(-1px); }}
+    button {{ width:100%; margin-top:24px; min-height:48px; border:0; border-radius:6px; background:var(--signal); color:white; font-size:14px; font-weight:700; cursor:pointer; transition:background .16s; }}
+    button:hover:not(:disabled) {{ background:var(--signal-dark); }}
     button:disabled {{ background:#a8aaac; cursor:not-allowed; }}
     footer {{ margin-top:18px; color:var(--muted); font-size:12px; line-height:1.5; }}
-    code {{ color:var(--ink); font-family:ui-monospace,SFMono-Regular,monospace; }}
-    @media (max-width:620px) {{ main {{ padding:36px 0; }} header {{ display:block; }} .status {{ margin-top:18px; }} form {{ padding:21px; }} .grid {{ grid-template-columns:1fr; }} .wide {{ grid-column:auto; }} }}
+    @media (max-width:620px) {{ main {{ padding:36px 0; }} form {{ padding:21px; }} .grid {{ grid-template-columns:1fr; }} .wide {{ grid-column:auto; }} }}
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div>
-        <p class="eyebrow">Local access point control</p>
-        <h1>WAC510 MCP</h1>
-        <p class="intro">Connect this MCP server to one NETGEAR WAC510. The connection is verified before OAuth authorization completes.</p>
-      </div>
-      {configured}
+      <h1>WAC510 MCP</h1>
+      <p class="intro">Configure the NETGEAR access point used by this MCP server. The connection is verified before authorization completes.</p>
     </header>
     <form method="post" action="/setup">
       <input type="hidden" name="request" value="{request_field}">
@@ -162,7 +153,7 @@ def _page(
       </details>
       <button type="submit"{disabled}>{button_label}</button>
     </form>
-    <footer>Credentials are sent only to the configured AP, then stored in an encrypted local settings file. OAuth requests expire after five minutes.</footer>
+    <footer>Credentials are sent only to the configured AP and stored in an encrypted local settings file.</footer>
   </main>
 </body>
 </html>"""
@@ -249,8 +240,17 @@ class WAC510OAuthProvider(InMemoryOAuthProvider):
             )
         if pending is None:
             return _html_response(
-                _page(request_id=None, settings=None),
-                status_code=400 if request_id else 200,
+                _page(
+                    request_id=None,
+                    settings=None,
+                    error=(
+                        "Return to your terminal and start the MCP login again."
+                        if request_id
+                        else None
+                    ),
+                    error_title="Authorization request expired.",
+                ),
+                status_code=410 if request_id else 200,
             )
         if form is None:
             return _html_response(_page(request_id=request_id, settings=current))
