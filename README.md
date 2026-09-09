@@ -113,6 +113,23 @@ uv run pytest
 uv run mypy src tests
 ```
 
+## Releasing
+
+The release workflow publishes a new version to PyPI, creates a matching GitHub Release, attaches the wheel and source archive, and adds provenance attestations. Start a patch release from any clean checkout with:
+
+```bash
+just release
+```
+
+Choose another semantic version increment when needed:
+
+```bash
+just release minor
+just release major
+```
+
+The recipe updates `main`, runs the local gate, bumps `pyproject.toml` and `uv.lock`, pushes `main`, fast-forwards and pushes `release`, then switches the checkout back to `main`. Use `just sync-release` to synchronize the branches without changing the version.
+
 The live test suite is read-only and opt-in. Its environment variables exist only for automated testing; normal users configure the server through OAuth:
 
 ```bash
