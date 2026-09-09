@@ -61,6 +61,7 @@ async def test_setup_page_has_exact_title_and_never_renders_password(tmp_path: P
         assert response.status_code == 200
         assert "<title>WAC510 MCP</title>" in response.text
         assert "<h1>WAC510 MCP</h1>" in response.text
+        assert "form-action" not in response.headers["content-security-policy"]
 
         request_id = parse_qs(urlsplit(setup_url).query)["request"][0]
         submitted = await client.post(
@@ -125,6 +126,9 @@ async def test_expired_authorization_has_actionable_page(tmp_path: Path) -> None
     assert response.status_code == 410
     assert "Authorization request expired." in response.text
     assert "start the MCP login again" in response.text
+    assert '<div class="grid" hidden>' in response.text
+    assert "<details hidden>" in response.text
+    assert '<button type="submit" disabled hidden>' in response.text
     await runtime.aclose()
 
 

@@ -68,6 +68,7 @@ def _page(
         else ""
     )
     disabled = "" if request_id else " disabled"
+    controls_hidden = " hidden" if request_id is None and error is not None else ""
     button_label = "Save & authorize" if request_id else "Start from your MCP client"
     password_hint = "Leave blank to keep the saved password." if settings else "Stored encrypted after verification."
 
@@ -115,7 +116,7 @@ def _page(
     <form method="post" action="/setup">
       <input type="hidden" name="request" value="{request_field}">
       {error_html}
-      <div class="grid">
+      <div class="grid"{controls_hidden}>
         <div class="wide">
           <label for="url">Access point URL</label>
           <input id="url" name="url" type="url" required value="{url}" placeholder="https://192.168.2.31" autocomplete="url">
@@ -130,7 +131,7 @@ def _page(
           <p class="hint">{password_hint}</p>
         </div>
       </div>
-      <details>
+      <details{controls_hidden}>
         <summary>Advanced connection settings</summary>
         <div class="grid">
           <div>
@@ -151,7 +152,7 @@ def _page(
           </div>
         </div>
       </details>
-      <button type="submit"{disabled}>{button_label}</button>
+      <button type="submit"{disabled}{controls_hidden}>{button_label}</button>
     </form>
     <footer>Credentials are sent only to the configured AP and stored in an encrypted local settings file.</footer>
   </main>
@@ -166,7 +167,7 @@ def _html_response(content: str, status_code: int = 200) -> HTMLResponse:
         headers={
             "Cache-Control": "no-store",
             "Content-Security-Policy": (
-                "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
+                "default-src 'none'; style-src 'unsafe-inline'; "
                 "frame-ancestors 'none'; base-uri 'none'"
             ),
             "Referrer-Policy": "no-referrer",
