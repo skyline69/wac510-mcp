@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 import httpx
+import pytest
 from fastmcp.client import Client
+from fastmcp.exceptions import ToolError
 
 from tests.fake_ap import FakeAP, fake_settings
 from wac510_mcp.server import create_server
@@ -97,3 +101,24 @@ async def test_raw_request_forces_confirmation_for_known_write_endpoint() -> Non
     assert isinstance(result.data, dict)
     assert result.data["required_confirmation"] == "REBOOT"
     assert fake_ap.login_count == 0
+
+
+async def test_expected_device_error_is_concise_without_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake_ap = FakeAP()
+    fake_ap.error_next_request = {
+        "status": 1,
+        "data": {"err_code": 28, "err_mesg": "Invalid configuration"},
+    }
+    server = create_server(fake_settings(), transport=httpx.MockTransport(fake_ap.handler))
+    caplog.set_level(logging.WARNING)
+
+    async with Client(server) as client:
+        with pytest.raises(ToolError, match="AP status 1, error 28: Invalid configuration"):
+            await client.call_tool(
+                "raw_query",
+                {"payload": {"system": {"unsupported": {"field": ""}}}},
+            )
+
+    assert "Traceback" not in caplog.text

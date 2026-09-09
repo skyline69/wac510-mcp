@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from functools import wraps
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ParamSpec, TypeVar, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -26,6 +28,8 @@ from wac510_mcp.runtime import DeviceRuntime
 from wac510_mcp.storage import EncryptedSettingsStore
 
 type Confirmation = bool | str
+P = ParamSpec("P")
+T = TypeVar("T")
 
 _DISRUPTIVE_CONFIRMATIONS: Mapping[str, str] = {
     "/reboot": "REBOOT",
@@ -56,6 +60,21 @@ _ALWAYS_MUTATING_ENDPOINTS = frozenset(
         "/upgradeSFTP",
     }
 )
+
+
+def _concise_tool_errors(
+    function: Callable[P, Awaitable[T]],
+) -> Callable[P, Awaitable[T]]:
+    """Convert expected WAC510 failures before FastMCP logs exceptions."""
+
+    @wraps(function)
+    async def wrapped(*args: P.args, **kwargs: P.kwargs) -> T:
+        try:
+            return await function(*args, **kwargs)
+        except WAC510Error as error:
+            raise ToolError(str(error), log_level=logging.WARNING) from None
+
+    return wrapped
 
 
 class QuietFastMCP(FastMCP):
@@ -180,16 +199,19 @@ def create_server(
         version="0.1.0",
         lifespan=app_lifespan,
         auth=auth,
+        mask_error_details=True,
         on_duplicate="error",
     )
 
     @server.tool
+    @_concise_tool_errors
     async def list_capabilities() -> JsonObject:
         """List named read selectors and the fields each selector requests."""
 
         return describe_capabilities()
 
     @server.tool
+    @_concise_tool_errors
     async def list_endpoints() -> JsonObject:
         """List raw HTTP routes discovered in the WAC510 V9.9.6.8 web UI."""
 
@@ -199,6 +221,7 @@ def create_server(
         }
 
     @server.tool
+    @_concise_tool_errors
     async def device_info(ctx: Context) -> JsonObject:
         """Read product, firmware, serial, and firmware-channel information."""
 
@@ -206,6 +229,7 @@ def create_server(
         return await client.query(deepcopy(CAPABILITIES["identity"].selector))
 
     @server.tool
+    @_concise_tool_errors
     async def query_capabilities(names: list[str], ctx: Context) -> JsonObject:
         """Read named domains concurrently and return each firmware response by name."""
 
@@ -227,6 +251,7 @@ def create_server(
         }
 
     @server.tool
+    @_concise_tool_errors
     async def list_clients(ctx: Context, limit: int = 5) -> JsonObject:
         """Read recent wireless clients. The firmware supports limits from 1 through 100."""
 
@@ -237,6 +262,7 @@ def create_server(
         return await client.query(selector)
 
     @server.tool
+    @_concise_tool_errors
     async def radio_status(ctx: Context) -> JsonObject:
         """Read radio enablement, supported bands, and station counts."""
 
@@ -244,6 +270,7 @@ def create_server(
         return await client.query(deepcopy(CAPABILITIES["radio_status"].selector))
 
     @server.tool
+    @_concise_tool_errors
     async def traffic_statistics(ctx: Context) -> JsonObject:
         """Read Ethernet and Wi-Fi packet and byte counters."""
 
@@ -251,6 +278,7 @@ def create_server(
         return await client.query(deepcopy(CAPABILITIES["traffic"].selector))
 
     @server.tool
+    @_concise_tool_errors
     async def raw_query(payload: JsonObject, ctx: Context) -> JsonObject:
         """Send an arbitrary read selector through /socketCommunication."""
 
@@ -258,6 +286,7 @@ def create_server(
         return await client.query(payload)
 
     @server.tool
+    @_concise_tool_errors
     async def apply_configuration(
         payload: JsonObject,
         ctx: Context,
@@ -272,6 +301,7 @@ def create_server(
         return {"performed": True, "response": result}
 
     @server.tool
+    @_concise_tool_errors
     async def raw_request(
         endpoint: str,
         payload: JsonObject,
@@ -293,6 +323,7 @@ def create_server(
         return await client.request(normalized, payload, mutating=effective_mutating)
 
     @server.tool
+    @_concise_tool_errors
     async def download_file(
         endpoint: str,
         destination: str,
@@ -318,6 +349,7 @@ def create_server(
         return {"path": str(path), "bytes": size}
 
     @server.tool
+    @_concise_tool_errors
     async def upload_file(
         endpoint: str,
         source: str,
@@ -350,6 +382,7 @@ def create_server(
         return {"performed": True, "response": response}
 
     @server.tool
+    @_concise_tool_errors
     async def reboot(ctx: Context, confirm: str = "") -> JsonObject:
         """Reboot the AP. Pass the exact confirmation token REBOOT."""
 
@@ -361,6 +394,7 @@ def create_server(
         return {"performed": True, "response": response}
 
     @server.tool
+    @_concise_tool_errors
     async def factory_reset(ctx: Context, confirm: str = "") -> JsonObject:
         """Erase AP configuration and restart. Pass the exact token FACTORY_RESET."""
 

@@ -21,6 +21,7 @@ class FakeAP:
         self.upload_count = 0
         self.expire_next_request = False
         self.fail_next_mutation = False
+        self.error_next_request: JsonObject | None = None
         self.last_cookie = ""
         self._token = ""
         self.bootstrap_count = 0
@@ -59,6 +60,11 @@ class FakeAP:
         if self.expire_next_request:
             self.expire_next_request = False
             return httpx.Response(200, json={"status": 100}, request=request)
+
+        if self.error_next_request is not None:
+            response = self.error_next_request
+            self.error_next_request = None
+            return httpx.Response(200, json=response, request=request)
 
         if request.url.path == "/logout":
             self.logout_count += 1
