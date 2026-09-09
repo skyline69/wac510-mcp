@@ -12,6 +12,8 @@ The server targets one AP per process. It does not use NETGEAR Insight, SSH, or 
 - [uv](https://docs.astral.sh/uv/)
 - A WAC510 reachable through its local management URL
 
+Expected startup failures are rendered as concise [Rich](https://rich.readthedocs.io/) panels with corrective guidance. Unexpected programming errors retain their tracebacks.
+
 Install the locked environment:
 
 ```bash

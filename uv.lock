@@ -1337,6 +1337,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
+    { name = "rich" },
 ]
 
 [package.dev-dependencies]
@@ -1350,6 +1351,7 @@ dev = [
 requires-dist = [
     { name = "fastmcp", specifier = "==4.0.3" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "rich", specifier = "==15.0.0" },
 ]
 
 [package.metadata.requires-dev]

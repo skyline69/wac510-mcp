@@ -14,8 +14,10 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 
 from wac510_mcp.capabilities import CAPABILITIES, describe_capabilities, merge_capabilities
+from wac510_mcp.cli import render_startup_error
 from wac510_mcp.client import ALLOWED_ENDPOINTS, WAC510Client
 from wac510_mcp.config import Settings
+from wac510_mcp.errors import WAC510Error
 from wac510_mcp.models import JsonObject, redact
 
 type Confirmation = bool | str
@@ -320,7 +322,11 @@ mcp = create_server()
 def main() -> None:
     """Run the stdio MCP server."""
 
-    mcp.run()
+    try:
+        mcp.run(show_banner=False)
+    except WAC510Error as error:
+        render_startup_error(error)
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":
