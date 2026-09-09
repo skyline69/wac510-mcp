@@ -56,6 +56,57 @@ Example URL-based MCP configuration:
 
 The server always hides FastMCP's startup banner. No environment variable or launch flag is required.
 
+## Add to Codex
+
+First, keep the server running in a terminal:
+
+```bash
+uvx wac510-mcp@latest
+```
+
+In another terminal, add its Streamable HTTP endpoint and start OAuth:
+
+```bash
+codex mcp add wac510 --url http://127.0.0.1:8000/mcp
+codex mcp login wac510 --oauth-client-registration dcr
+```
+
+Your browser opens the **WAC510 MCP** setup page. Enter the AP connection settings and authorize the client. Confirm the connection with:
+
+```bash
+codex mcp list
+```
+
+You can also enter `/mcp` inside Codex to inspect the server and its tools. Codex CLI, the IDE extension, and the desktop app share the same MCP configuration. See the [official OpenAI MCP documentation](https://developers.openai.com/codex/mcp).
+
+## Add to Claude Code
+
+Keep `uvx wac510-mcp@latest` running, then add the server at user scope so it is available in every project:
+
+```bash
+claude mcp add \
+  --transport http \
+  --scope user \
+  wac510 \
+  http://127.0.0.1:8000/mcp
+```
+
+Open Claude Code and enter:
+
+```text
+/mcp
+```
+
+Select `wac510`, authenticate, and complete the setup page in your browser. Verify the saved configuration with:
+
+```bash
+claude mcp get wac510
+```
+
+See the [official Claude Code MCP documentation](https://code.claude.com/docs/en/mcp).
+
+The OAuth transport is HTTP, not stdio. Both clients connect to the running URL; they do not launch `uvx` through a `command` entry. The server listens only on this machine by default.
+
 ## Stored settings
 
 Settings are saved under the platform's user configuration directory. On Linux, the default location is:
