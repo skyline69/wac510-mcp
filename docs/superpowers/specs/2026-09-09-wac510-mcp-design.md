@@ -83,7 +83,7 @@ A catalogue maps stable names to JSON read selectors. Initial domains cover:
 - traffic, interface statistics, trend graphs, URL tracking, neighbor APs, rogue APs, WDS, and packet capture
 - syslog, remote management, UPnP, LED control, energy efficiency, users, backups, and firmware state
 
-Each selector is immutable and copied before use. `list_capabilities` returns the catalogue's names and descriptions. `query_capabilities` combines any number of compatible selectors into one payload and one AP round trip.
+Each selector is immutable and copied before use. `list_capabilities` returns the catalogue's names and descriptions. `query_capabilities` performs up to four domain reads concurrently and keys each response by capability. This avoids a firmware behavior in which oversized cross-domain selectors return status `0` but silently omit fields. `raw_query` remains available for callers that know which selectors the firmware can combine safely.
 
 ### MCP Interface
 
@@ -132,7 +132,7 @@ The server attempts one reauthentication after status `100`. It retries the orig
 
 ## Efficiency
 
-The server keeps one async connection pool for its lifetime. It merges named selectors so broad status checks use one AP request. It avoids polling, caches only the immutable capability catalogue, and leaves live device data uncached. Downloads stream to disk. Tool responses preserve the AP's JSON without expensive model conversion beyond envelope validation.
+The server keeps one async connection pool for its lifetime. It runs multi-domain reads with a concurrency limit of four. It avoids polling, caches only the immutable capability catalogue, and leaves live device data uncached. Downloads stream to disk. Tool responses preserve the AP's JSON without expensive model conversion beyond envelope validation.
 
 ## Testing
 
